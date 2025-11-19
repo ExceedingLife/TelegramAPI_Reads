@@ -1,11 +1,12 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import asyncio
 from telethon import TelegramClient
-from telethon.tl.types import Channel, Chat, User
+from telethon.tl.types import Channel, Chat, User, MessageReactions
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
 import os
 from dotenv import load_dotenv
@@ -15,6 +16,15 @@ from langdetect import detect, LangDetectException
 load_dotenv()
 
 app = FastAPI(title="Telegram Channel API", version="1.0.0")
+
+# Add CORS middleware to allow frontend requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8001", "http://127.0.0.1:8001"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Telegram API credentials from environment variables
 API_ID = os.getenv("TELEGRAM_API_ID")
@@ -26,6 +36,42 @@ if not API_ID or not API_HASH:
 
 # Initialize Telegram client
 client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+
+# Helper function to extract reactions from a message
+def extract_reactions(message) -> Optional[List]:
+    """Extract reactions from a Telegram message"""
+    try:
+        if not message.reactions:
+            return None
+        
+        reactions_list = []
+        if isinstance(message.reactions, MessageReactions):
+            # Check if results attribute exists
+            if hasattr(message.reactions, 'results') and message.reactions.results:
+                for reaction in message.reactions.results:
+                    # Get emoji - can be a string emoji or a Document (custom emoji)
+                    emoji_str = None
+                    if hasattr(reaction, 'reaction'):
+                        if hasattr(reaction.reaction, 'emoticon'):
+                            emoji_str = reaction.reaction.emoticon
+                        elif hasattr(reaction.reaction, 'document_id'):
+                            # Custom emoji - use a placeholder or document ID
+                            emoji_str = f"🎨{reaction.reaction.document_id}"
+                        else:
+                            # Try to get emoji from reaction object
+                            emoji_str = str(reaction.reaction)
+                    
+                    if emoji_str and hasattr(reaction, 'count'):
+                        reactions_list.append(ReactionModel(
+                            emoji=emoji_str,
+                            count=reaction.count
+                        ))
+        
+        return reactions_list if reactions_list else None
+    except Exception as e:
+        # If reaction extraction fails, return None
+        print(f"Warning: Could not extract reactions for message {message.id}: {e}")
+        return None
 
 # Translation function
 def translate_russian_to_english(text: str) -> str:
@@ -62,6 +108,10 @@ def translate_russian_to_english(text: str) -> str:
         return text
 
 # Response models
+class ReactionModel(BaseModel):
+    emoji: str
+    count: int
+
 class MessageModel(BaseModel):
     id: int
     date: datetime
@@ -70,6 +120,7 @@ class MessageModel(BaseModel):
     sender_username: Optional[str] = None
     views: Optional[int] = None
     forwards: Optional[int] = None
+    reactions: Optional[List[ReactionModel]] = None
 
 class ChannelModel(BaseModel):
     id: int
@@ -173,6 +224,9 @@ async def get_messages(
             if translate:
                 text = translate_russian_to_english(text)
             
+            # Extract reactions
+            reactions = extract_reactions(message)
+            
             message_model = MessageModel(
                 id=message.id,
                 date=message.date,
@@ -180,7 +234,8 @@ async def get_messages(
                 sender_id=sender_id,
                 sender_username=sender_username,
                 views=message.views,
-                forwards=message.forwards
+                forwards=message.forwards,
+                reactions=reactions
             )
             messages.append(message_model)
         
@@ -245,6 +300,9 @@ async def get_messages_by_username(
             if translate:
                 text = translate_russian_to_english(text)
             
+            # Extract reactions
+            reactions = extract_reactions(message)
+            
             message_model = MessageModel(
                 id=message.id,
                 date=message.date,
@@ -252,7 +310,8 @@ async def get_messages_by_username(
                 sender_id=sender_id,
                 sender_username=sender_username,
                 views=message.views,
-                forwards=message.forwards
+                forwards=message.forwards,
+                reactions=reactions
             )
             messages.append(message_model)
         
