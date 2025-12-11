@@ -11,11 +11,19 @@ from telethon.errors import SessionPasswordNeededError, FloodWaitError
 import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
+try:
+    import argostranslate.package as argos_package
+    import argostranslate.translate as argos_translate
+except ImportError:
+    argos_package = None
+    argos_translate = None
 from langdetect import detect, LangDetectException
 
 load_dotenv()
 
 app = FastAPI(title="Telegram Channel API", version="1.0.0")
+
+TRANSLATE_CHAR_LIMIT = 5000
 
 # Add CORS middleware to allow frontend requests
 app.add_middleware(
@@ -36,6 +44,33 @@ if not API_ID or not API_HASH:
 
 # Initialize Telegram client
 client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+
+# Response models
+class ReactionModel(BaseModel):
+    emoji: str
+    count: int
+
+class TranslationRequest(BaseModel):
+    text: str
+    source_lang: Optional[str] = "auto"
+    target_lang: Optional[str] = "en"
+    mode: Optional[str] = "online"  # online | offline
+
+class MessageModel(BaseModel):
+    id: int
+    date: datetime
+    text: str
+    sender_id: Optional[int] = None
+    sender_username: Optional[str] = None
+    views: Optional[int] = None
+    forwards: Optional[int] = None
+    reactions: Optional[List[ReactionModel]] = None
+
+class ChannelModel(BaseModel):
+    id: int
+    title: str
+    username: Optional[str] = None
+    participants_count: Optional[int] = None
 
 # Helper function to extract reactions from a message
 def extract_reactions(message) -> Optional[List]:
@@ -73,6 +108,64 @@ def extract_reactions(message) -> Optional[List]:
         print(f"Warning: Could not extract reactions for message {message.id}: {e}")
         return None
 
+@app.post("/translate")
+async def translate_text(req: TranslationRequest):
+    """
+    Translate text using GoogleTranslator.
+    Defaults: auto-detect source, target English.
+    """
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text is required")
+    if len(req.text) > TRANSLATE_CHAR_LIMIT:
+        raise HTTPException(status_code=400, detail=f"Text exceeds {TRANSLATE_CHAR_LIMIT} characters")
+    
+    mode = (req.mode or "online").lower()
+    source = req.source_lang or "auto"
+    target = req.target_lang or "en"
+
+    # Offline translation using Argos Translate
+    if mode == "offline":
+        if not argos_translate:
+            raise HTTPException(status_code=500, detail="Argos Translate not installed. Install argostranslate and language packs.")
+        if source == "auto":
+            raise HTTPException(status_code=400, detail="Offline translation requires an explicit source_lang (e.g., 'ru' or 'uk')")
+        try:
+            installed_langs = argos_translate.get_installed_languages()
+            installed_codes = [getattr(l, "code", None) for l in installed_langs]
+
+            src_lang = next((l for l in installed_langs if getattr(l, "code", "") == source), None)
+            tgt_lang = next((l for l in installed_langs if getattr(l, "code", "") == target), None)
+            if not src_lang or not tgt_lang:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Offline language pair not installed ({source}->{target}). Installed codes: {installed_codes}"
+                )
+            translator = src_lang.get_translation(tgt_lang)
+            translated = translator.translate(req.text)
+            return {
+                "translated_text": translated,
+                "source_lang": source,
+                "target_lang": target,
+                "mode": "offline"
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Offline translation failed: {str(e)}")
+
+    # Default: online translation
+    try:
+        translator = GoogleTranslator(source=source, target=target)
+        translated = translator.translate(req.text)
+        return {
+            "translated_text": translated,
+            "source_lang": source,
+            "target_lang": target,
+            "mode": "online"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+
 # Translation function
 def translate_russian_to_english(text: str) -> str:
     """
@@ -106,27 +199,6 @@ def translate_russian_to_english(text: str) -> str:
     except Exception:
         # If translation fails, return original text
         return text
-
-# Response models
-class ReactionModel(BaseModel):
-    emoji: str
-    count: int
-
-class MessageModel(BaseModel):
-    id: int
-    date: datetime
-    text: str
-    sender_id: Optional[int] = None
-    sender_username: Optional[str] = None
-    views: Optional[int] = None
-    forwards: Optional[int] = None
-    reactions: Optional[List[ReactionModel]] = None
-
-class ChannelModel(BaseModel):
-    id: int
-    title: str
-    username: Optional[str] = None
-    participants_count: Optional[int] = None
 
 @app.on_event("startup")
 async def startup_event():

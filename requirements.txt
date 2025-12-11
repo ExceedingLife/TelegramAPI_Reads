@@ -5,4 +5,5 @@ python-dotenv==1.0.0
 pydantic==2.5.0
 deep-translator==1.11.4
 langdetect==1.0.9
+argostranslate==1.9.6
 

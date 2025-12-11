@@ -169,6 +169,86 @@ curl http://localhost:8000/channels/123456789/messages?limit=50&offset_id=100
 - Session files are stored locally and should be kept secure
 - Media messages are indicated with `[Media: TypeName]` in the text field
 
+## Building Executables
+
+You can create standalone executables that run without Python installed.
+
+### Quick Build (Windows)
+
+Double-click `build.bat` or run:
+```bash
+build.bat
+```
+
+### Manual Build
+
+1. Install PyInstaller:
+   ```bash
+   pip install pyinstaller
+   ```
+
+2. Run the build script:
+   ```bash
+   python build_executables.py
+   ```
+
+This creates two executables in the `dist` folder:
+- `TelegramAPI_Server.exe` - API server (port 8000)
+- `TelegramAPI_Frontend.exe` - Frontend server (port 8001)
+
+### Using the Executables
+
+1. Create a `.env` file with your Telegram credentials (see Setup step 3)
+2. Run `TelegramAPI_Server.exe` first to authenticate
+3. Run `TelegramAPI_Frontend.exe` to start the web interface
+4. Open `http://localhost:8001` in your browser
+
+For detailed instructions, see [BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md)
+
+## Frontend
+
+A web-based frontend is available at `frontend.py`. Start it with:
+```bash
+python frontend.py
+```
+
+Then open `http://localhost:8001` in your browser.
+
+Features:
+- Telegram-like dark theme UI
+- Message bubbles with reactions
+- Auto-refresh with configurable interval
+- Channel selection and browsing
+- Translator mode (online Google, offline Argos), 5000 char limit
+- Supports Russian→English and Ukrainian→English (can add more with packs)
+
+### Translator (online/offline)
+
+- Online mode uses Google Translate via `deep_translator`
+- Offline mode uses Argos Translate (requires language packs)
+- Input limit: 5000 characters (UI enforces this with an error)
+
+#### Install Argos Translate and language packs
+
+Already in `requirements.txt`, but you need language packs for offline:
+```bash
+python -m argostranslate.package install https://raw.githubusercontent.com/argosopentech/argospm-index/main/ru_en.argosmodel
+python -m argostranslate.package install https://raw.githubusercontent.com/argosopentech/argospm-index/main/uk_en.argosmodel
+```
+
+You can add other language pairs by installing their `.argosmodel` URLs from the Argos index.
+
+#### Using the translator UI
+
+1. Open the app and choose mode:
+   - Viewer: channel browsing/messages
+   - Translator: two text areas for input/output
+2. In Translator mode:
+   - Pick Online (Google) or Offline (Argos)
+   - Choose language pair (Russian→English or Ukrainian→English)
+   - Enter text (≤5000 chars) and click Translate
+3. Offline mode will only work if the matching Argos language pack is installed.
+
 ## Security
 
 - Never commit your `.env` file or session files to version control

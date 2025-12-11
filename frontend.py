@@ -100,6 +100,21 @@ HTML_TEMPLATE = """
             align-items: center;
         }
 
+        .mode-select {
+            background: #242f3d;
+            color: #e4e6eb;
+            border: 1px solid #2b5278;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .mode-select:focus {
+            outline: none;
+            border-color: #5288c1;
+        }
+
         .refresh-interval {
             display: flex;
             gap: 6px;
@@ -285,6 +300,109 @@ HTML_TEMPLATE = """
             opacity: 0.7;
         }
 
+        /* Translator view */
+        .translator-container {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            padding: 20px;
+            gap: 16px;
+            background: #0e1621;
+        }
+
+        .translator-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .translator-card {
+            background: #17212b;
+            border: 1px solid #242f3d;
+            border-radius: 12px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .translator-card h3 {
+            margin: 0;
+            font-size: 14px;
+            color: #e4e6eb;
+        }
+
+        .translator-textarea {
+            width: 100%;
+            min-height: 180px;
+            background: #0e1621;
+            color: #e4e6eb;
+            border: 1px solid #2b5278;
+            border-radius: 10px;
+            padding: 10px;
+            font-size: 14px;
+            resize: vertical;
+        }
+
+        .translator-textarea:focus {
+            outline: none;
+            border-color: #5288c1;
+        }
+
+        .translate-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .translate-btn {
+            background: #5288c1;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            padding: 10px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .translate-btn:hover {
+            background: #5a95d1;
+        }
+
+        .translator-status {
+            font-size: 13px;
+            color: #8e9297;
+        }
+
+        .translator-error {
+            font-size: 13px;
+            color: #ff6b6b;
+        }
+
+        .translator-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .translator-mode-select {
+            background: #242f3d;
+            color: #e4e6eb;
+            border: 1px solid #2b5278;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .translator-mode-select:focus {
+            outline: none;
+            border-color: #5288c1;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -336,7 +454,12 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="header">
-        <h1>📱 Telegram Channel Viewer</h1>
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <select id="modeSelect" class="mode-select">
+                <option value="viewer">📱 Telegram Channel Viewer</option>
+                <option value="translator">🌐 Translator</option>
+            </select>
+        </div>
         <div class="channel-selector">
             <select id="channelSelect">
                 <option value="">Select a channel...</option>
@@ -359,9 +482,37 @@ HTML_TEMPLATE = """
 
         <div class="messages-container">
             <div class="messages-list" id="messagesList">
-                <div class="empty-state">
+                <div class="empty-state" id="viewerEmptyState">
                     <h2>Select a channel to view messages</h2>
                     <p>Choose a channel from the dropdown or sidebar</p>
+                </div>
+            </div>
+
+            <div class="translator-container" id="translatorContainer">
+                <div class="translator-controls">
+                    <div>
+                        <label for="translatorModeSelect">Translator:</label>
+                        <select id="translatorModeSelect" class="translator-mode-select">
+                            <option value="online">Online (Google)</option>
+                            <option value="offline">Offline (Argos)</option>
+                        </select>
+                    </div>
+                    <div class="translator-status" id="translateCharCount">0 / 5000</div>
+                    <div class="translator-error" id="translateError"></div>
+                </div>
+                <div class="translator-grid">
+                    <div class="translator-card">
+                        <h3>Input</h3>
+                        <textarea id="translateInput" class="translator-textarea" placeholder="Enter text to translate..." oninput="handleTranslateInput()"></textarea>
+                    </div>
+                    <div class="translator-card">
+                        <h3>Output</h3>
+                        <textarea id="translateOutput" class="translator-textarea" placeholder="Translation will appear here..." readonly></textarea>
+                        <div class="translator-status" id="translateStatus"></div>
+                    </div>
+                </div>
+                <div class="translate-actions">
+                    <button class="translate-btn" id="translateBtn" onclick="translateText()">Translate</button>
                 </div>
             </div>
         </div>
@@ -369,10 +520,18 @@ HTML_TEMPLATE = """
 
     <script>
         const API_BASE_URL = 'http://127.0.0.1:8000';
+        const TRANSLATE_CHAR_LIMIT = 5000;
+        const languages = [
+            { id: 'ru', name: 'Russian → English', source: 'ru', target: 'en' },
+            { id: 'uk', name: 'Ukrainian → English', source: 'uk', target: 'en' }
+        ];
         let channels = [];
         let currentChannelId = null;
+        let currentMode = 'viewer';
+        let selectedLanguage = languages[0].id;
         let autoRefreshInterval = null;
         let autoRefreshEnabled = true;
+        let translatorMode = 'online'; // online | offline
 
         // Format date to Telegram-like format
         function formatDate(dateString) {
@@ -397,6 +556,9 @@ HTML_TEMPLATE = """
 
         // Load channels
         async function loadChannels() {
+            if (currentMode !== 'viewer') {
+                return;
+            }
             try {
                 const response = await fetch(`${API_BASE_URL}/channels`);
                 if (!response.ok) throw new Error('Failed to fetch channels');
@@ -434,6 +596,30 @@ HTML_TEMPLATE = """
                 console.error('Error loading channels:', error);
                 document.getElementById('sidebar').innerHTML = 
                     `<div class="error">Error loading channels: ${error.message}</div>`;
+            }
+        }
+
+        // Render language options in sidebar for translator mode
+        function renderLanguagesSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.innerHTML = '';
+
+            languages.forEach(lang => {
+                const item = document.createElement('div');
+                item.className = 'channel-item' + (lang.id === selectedLanguage ? ' active' : '');
+                item.onclick = () => {
+                    selectedLanguage = lang.id;
+                    renderLanguagesSidebar();
+                };
+                item.innerHTML = `
+                    <h3>${lang.name}</h3>
+                    <p>Source: ${lang.source.toUpperCase()} → Target: ${lang.target.toUpperCase()}</p>
+                `;
+                sidebar.appendChild(item);
+            });
+
+            if (languages.length === 0) {
+                sidebar.innerHTML = '<div class="empty-state"><p>No languages configured</p></div>';
             }
         }
 
@@ -555,6 +741,109 @@ HTML_TEMPLATE = """
             }
         }
 
+        // Toggle modes between viewer and translator
+        function setMode(mode) {
+            currentMode = mode;
+            const channelSelect = document.getElementById('channelSelect');
+            const refreshControls = document.querySelector('.refresh-controls');
+            const messagesList = document.getElementById('messagesList');
+            const translatorContainer = document.getElementById('translatorContainer');
+            const viewerEmptyState = document.getElementById('viewerEmptyState');
+
+            if (mode === 'viewer') {
+                channelSelect.style.display = 'block';
+                refreshControls.style.display = 'flex';
+                messagesList.style.display = 'flex';
+                translatorContainer.style.display = 'none';
+                viewerEmptyState.style.display = 'block';
+                startAutoRefresh();
+                loadChannels();
+            } else {
+                // Translator mode
+                stopAutoRefresh();
+                channelSelect.style.display = 'none';
+                refreshControls.style.display = 'none';
+                messagesList.style.display = 'none';
+                viewerEmptyState.style.display = 'none';
+                translatorContainer.style.display = 'flex';
+                renderLanguagesSidebar();
+                const modeSelect = document.getElementById('translatorModeSelect');
+                if (modeSelect) {
+                    modeSelect.value = translatorMode;
+                }
+                handleTranslateInput();
+            }
+        }
+
+        // Translate text using API
+        async function translateText() {
+            const input = document.getElementById('translateInput');
+            const output = document.getElementById('translateOutput');
+            const status = document.getElementById('translateStatus');
+            const errorEl = document.getElementById('translateError');
+            const btn = document.getElementById('translateBtn');
+            const lang = languages.find(l => l.id === selectedLanguage) || languages[0];
+
+            const text = input.value.trim();
+            if (!text) {
+                status.textContent = 'Enter text to translate.';
+                return;
+            }
+            if (text.length > TRANSLATE_CHAR_LIMIT) {
+                errorEl.textContent = `Too many characters. Limit is ${TRANSLATE_CHAR_LIMIT}.`;
+                status.textContent = '';
+                return;
+            }
+
+            status.textContent = 'Translating...';
+            errorEl.textContent = '';
+            output.value = '';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/translate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text,
+                        source_lang: lang.source,
+                        target_lang: lang.target,
+                        mode: translatorMode
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                output.value = data.translated_text || '';
+                status.textContent = `Translated ${lang.source.toUpperCase()} → ${lang.target.toUpperCase()}`;
+            } catch (error) {
+                console.error('Translation error:', error);
+                status.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        function handleTranslateInput() {
+            const input = document.getElementById('translateInput');
+            const charCount = document.getElementById('translateCharCount');
+            const errorEl = document.getElementById('translateError');
+            const btn = document.getElementById('translateBtn');
+            const len = input.value.length;
+
+            charCount.textContent = `${len} / ${TRANSLATE_CHAR_LIMIT}`;
+
+            if (len > TRANSLATE_CHAR_LIMIT) {
+                errorEl.textContent = `Too many characters. Limit is ${TRANSLATE_CHAR_LIMIT}.`;
+                btn.disabled = true;
+                btn.style.opacity = 0.7;
+            } else {
+                errorEl.textContent = '';
+                btn.disabled = false;
+                btn.style.opacity = 1;
+            }
+        }
+
         // Toggle auto-refresh
         function toggleAutoRefresh() {
             autoRefreshEnabled = !autoRefreshEnabled;
@@ -608,16 +897,28 @@ HTML_TEMPLATE = """
             }
         });
 
+        // Mode select handler
+        document.getElementById('modeSelect').addEventListener('change', (e) => {
+            const mode = e.target.value === 'translator' ? 'translator' : 'viewer';
+            setMode(mode);
+        });
+
+        // Translator mode selector
+        document.getElementById('translatorModeSelect').addEventListener('change', (e) => {
+            translatorMode = e.target.value === 'offline' ? 'offline' : 'online';
+            handleTranslateInput();
+        });
+
         // Refresh interval input change handler
         document.getElementById('refreshInterval').addEventListener('change', updateRefreshInterval);
         document.getElementById('refreshInterval').addEventListener('input', updateRefreshInterval);
 
         // Initialize on load
         window.addEventListener('load', () => {
-            loadChannels();
-            
-            // Start auto-refresh with default interval
+            setMode('viewer');
+            // Start auto-refresh with default interval in viewer mode
             startAutoRefresh();
+            handleTranslateInput();
         });
     </script>
 </body>
